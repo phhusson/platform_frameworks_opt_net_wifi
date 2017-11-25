@@ -1206,11 +1206,6 @@ public class WifiStateMachine extends StateMachine implements WifiNative.WifiRss
     private static final String LOGD_LEVEL_DEBUG = "D";
     private static final String LOGD_LEVEL_VERBOSE = "V";
     private void configureVerboseHalLogging(boolean enableVerbose) {
-        if (mBuildProperties.isUserBuild()) {  // Verbose HAL logging not supported on user builds.
-            return;
-        }
-        mPropertyService.set(SYSTEM_PROPERTY_LOG_CONTROL_WIFIHAL,
-                enableVerbose ? LOGD_LEVEL_VERBOSE : LOGD_LEVEL_DEBUG);
     }
 
     private int mAggressiveHandover = 0;
