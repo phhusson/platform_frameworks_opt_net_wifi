@@ -460,7 +460,8 @@ public class WifiConnectivityManager {
         @Override
         public void onPnoNetworkFound(ScanResult[] results) {
             for (ScanResult result: results) {
-                mScanDetails.add(ScanResultUtil.toScanDetail(result));
+                if(result != null && result.informationElements != null)
+                    mScanDetails.add(ScanResultUtil.toScanDetail(result));
             }
 
             boolean wasConnectAttempted;
