@@ -332,13 +332,15 @@ public class WifiNative {
     }
 
     /** Helper method invoked to start supplicant if there were no STA ifaces */
+    private boolean supplicantOn = false;
     private boolean startSupplicant() {
         synchronized (mLock) {
-            if (!mIfaceMgr.hasAnyStaIface()) {
+            if (!mIfaceMgr.hasAnyStaIface() || !supplicantOn) {
                 if (!mWificondControl.enableSupplicant()) {
                     Log.e(TAG, "Failed to enable supplicant");
                     return false;
                 }
+                supplicantOn = true;
                 if (!waitForSupplicantConnection()) {
                     Log.e(TAG, "Failed to connect to supplicant");
                     return false;
@@ -363,6 +365,7 @@ public class WifiNative {
                 if (!mWificondControl.disableSupplicant()) {
                     Log.e(TAG, "Failed to disable supplicant");
                 }
+                supplicantOn = false;
             }
         }
     }
@@ -852,11 +855,6 @@ public class WifiNative {
                 mWifiMetrics.incrementNumSetupClientInterfaceFailureDueToHal();
                 return null;
             }
-            if (!startSupplicant()) {
-                Log.e(TAG, "Failed to start supplicant");
-                mWifiMetrics.incrementNumSetupClientInterfaceFailureDueToSupplicant();
-                return null;
-            }
             Iface iface = mIfaceMgr.allocateIface(Iface.IFACE_TYPE_STA);
             if (iface == null) {
                 Log.e(TAG, "Failed to allocate new STA iface");
@@ -868,6 +866,12 @@ public class WifiNative {
                 Log.e(TAG, "Failed to create STA iface in vendor HAL");
                 mIfaceMgr.removeIface(iface.id);
                 mWifiMetrics.incrementNumSetupClientInterfaceFailureDueToHal();
+                return null;
+            }
+	    Log.e(TAG, "Starting supplicant");
+            if (!startSupplicant()) {
+                Log.e(TAG, "Failed to start supplicant");
+                mWifiMetrics.incrementNumSetupClientInterfaceFailureDueToSupplicant();
                 return null;
             }
             if (mWificondControl.setupInterfaceForClientMode(iface.name) == null) {
