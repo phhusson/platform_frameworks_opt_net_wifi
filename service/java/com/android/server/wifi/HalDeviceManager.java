@@ -63,8 +63,8 @@ import java.util.Set;
  */
 public class HalDeviceManager {
     private static final String TAG = "HalDevMgr";
-    private static final boolean VDBG = false;
-    private boolean mDbg = false;
+    private static final boolean VDBG = true;
+    private boolean mDbg = true;
 
     private static final int START_HAL_RETRY_INTERVAL_MS = 20;
     // Number of attempts a start() is re-tried. A value of 0 means no retries after a single
@@ -224,6 +224,16 @@ public class HalDeviceManager {
      */
     public IWifiStaIface createStaIface(boolean lowPrioritySta,
             @Nullable InterfaceDestroyedListener destroyedListener, @Nullable Handler handler) {
+        //As of O and O-MR1, configureChip MUST BE after a startWifi
+        //Pie changed this to allow dynamic configureChip
+        //No O/O-MR1 HAL support that, so restart wifi HAL when we do that
+        if(android.os.SystemProperties.getInt("persist.sys.vndk", 28) < 28) {
+            Log.e(TAG, "createStaIface: Stopping wifi");
+            stopWifi();
+            Log.e(TAG, "createStaIface: Starting wifi");
+            startWifi();
+            Log.e(TAG, "createStaIface: Creating iface");
+        }
         return (IWifiStaIface) createIface(IfaceType.STA, lowPrioritySta, destroyedListener,
                 handler);
     }
@@ -233,6 +243,14 @@ public class HalDeviceManager {
      */
     public IWifiApIface createApIface(@Nullable InterfaceDestroyedListener destroyedListener,
             @Nullable Handler handler) {
+        //cf createStaIface
+        if(android.os.SystemProperties.getInt("persist.sys.vndk", 28) < 28) {
+            Log.e(TAG, "createApIface: Stopping wifi");
+            stopWifi();
+            Log.e(TAG, "createApIface: Starting wifi");
+            startWifi();
+            Log.e(TAG, "createApIface: Creating iface");
+        }
         return (IWifiApIface) createIface(IfaceType.AP, false, destroyedListener, handler);
     }
 

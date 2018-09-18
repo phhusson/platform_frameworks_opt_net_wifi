@@ -692,8 +692,21 @@ public class WifiNative {
     private String createApIface(@NonNull Iface iface) {
         synchronized (mLock) {
             if (mWifiVendorHal.isVendorHalSupported()) {
-                return mWifiVendorHal.createApIface(
+                String ret = mWifiVendorHal.createApIface(
                         new InterfaceDestoyedListenerInternal(iface.id));
+                //In O and O-MR1, there was only ONE wifi interface for everything (sta and ap)
+                //Most vendors used "wlan0" for those interfaces, but there is no guarantee
+                //This override exists here, because most OEMs return "ap0" when doing createApIface,
+                //even when the iface is actually called "wlan0"
+                //
+                //To be perfectly clean, we should check what value createStaIface (would have) returned
+                //and use the same one.
+                //That's overly complicated, so let's assume this is wlan0 for the moment
+                if(android.os.SystemProperties.getInt("persist.sys.vndk", 28) < 28) {
+                    ret = "wlan0";
+                }
+
+                return ret;
             } else {
                 Log.i(TAG, "Vendor Hal not supported, ignoring createApIface.");
                 return handleIfaceCreationWhenVendorHalNotSupported(iface);
