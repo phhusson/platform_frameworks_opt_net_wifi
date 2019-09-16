@@ -717,7 +717,7 @@ public class SupplicantStaIfaceHal {
      * the device.
      * @return true if supported, false otherwise.
      */
-    private boolean isV1_1() {
+    /* package */ boolean isV1_1() {
         return checkHalVersionByInterfaceName(
                 android.hardware.wifi.supplicant.V1_1.ISupplicant.kInterfaceName);
     }
@@ -727,7 +727,7 @@ public class SupplicantStaIfaceHal {
      * the device.
      * @return true if supported, false otherwise.
      */
-    private boolean isV1_2() {
+    /* package */ boolean isV1_2() {
         return checkHalVersionByInterfaceName(
                 android.hardware.wifi.supplicant.V1_2.ISupplicant.kInterfaceName);
     }
