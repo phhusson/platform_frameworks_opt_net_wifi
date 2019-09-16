@@ -690,14 +690,13 @@ public class SupplicantStaIfaceHal {
      */
     public boolean startDaemon() {
         synchronized (mLock) {
+            Log.i(TAG, "Starting supplicant using init");
+            mFrameworkFacade.startSupplicant();
             if (isV1_1()) {
                 Log.i(TAG, "Starting supplicant using HIDL");
                 return startDaemon_V1_1();
-            } else {
-                Log.i(TAG, "Starting supplicant using init");
-                mFrameworkFacade.startSupplicant();
-                return true;
             }
+            return true;
         }
     }
 
