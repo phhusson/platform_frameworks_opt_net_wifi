@@ -370,9 +370,11 @@ public class WifiNative {
     }
 
     /** Helper method invoked to start supplicant if there were no STA ifaces */
+    private boolean supplicantOn = false;
     private boolean startSupplicant() {
         synchronized (mLock) {
-            if (!mIfaceMgr.hasAnyStaIfaceForConnectivity()) {
+            boolean prePieWifi = !mSupplicantStaIfaceHal.isV1_2();
+            if (!mIfaceMgr.hasAnyStaIfaceForConnectivity() || (prePieWifi && !supplicantOn)) {
                 if (!startAndWaitForSupplicantConnection()) {
                     Log.e(TAG, "Failed to connect to supplicant");
                     return false;
@@ -382,6 +384,8 @@ public class WifiNative {
                     Log.e(TAG, "Failed to register supplicant death handler");
                     return false;
                 }
+
+		supplicantOn = true;
             }
             return true;
         }
@@ -395,6 +399,7 @@ public class WifiNative {
                     Log.e(TAG, "Failed to deregister supplicant death handler");
                 }
                 mSupplicantStaIfaceHal.terminate();
+		supplicantOn = false;
             }
         }
     }
@@ -941,7 +946,9 @@ public class WifiNative {
                 mWifiMetrics.incrementNumSetupClientInterfaceFailureDueToHal();
                 return null;
             }
-            if (!startSupplicant()) {
+            boolean prePieWifi = !mSupplicantStaIfaceHal.isV1_2();
+
+            if (!prePieWifi && !startSupplicant()) {
                 Log.e(TAG, "Failed to start supplicant");
                 mWifiMetrics.incrementNumSetupClientInterfaceFailureDueToSupplicant();
                 return null;
@@ -963,6 +970,11 @@ public class WifiNative {
                 Log.e(TAG, "Failed to setup iface in wificond on " + iface);
                 teardownInterface(iface.name);
                 mWifiMetrics.incrementNumSetupClientInterfaceFailureDueToWificond();
+                return null;
+            }
+            if (prePieWifi && !startSupplicant()) {
+                Log.e(TAG, "Failed to start supplicant");
+                mWifiMetrics.incrementNumSetupClientInterfaceFailureDueToSupplicant();
                 return null;
             }
             if (!mSupplicantStaIfaceHal.setupIface(iface.name)) {
