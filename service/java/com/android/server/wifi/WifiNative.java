@@ -335,7 +335,8 @@ public class WifiNative {
     private boolean supplicantOn = false;
     private boolean startSupplicant() {
         synchronized (mLock) {
-            if (!mIfaceMgr.hasAnyStaIface() || !supplicantOn) {
+            boolean prePieWifi = !mSupplicantStaIfaceHal.isV1_1();
+            if (!mIfaceMgr.hasAnyStaIface() || (prePieWifi && !supplicantOn)) {
                 if (!mWificondControl.enableSupplicant()) {
                     Log.e(TAG, "Failed to enable supplicant");
                     return false;
@@ -881,8 +882,8 @@ public class WifiNative {
                 mWifiMetrics.incrementNumSetupClientInterfaceFailureDueToHal();
                 return null;
             }
-	    Log.e(TAG, "Starting supplicant");
-            if (!startSupplicant()) {
+            boolean prePieWifi = !mSupplicantStaIfaceHal.isV1_1();
+            if (!prePieWifi && !startSupplicant()) {
                 Log.e(TAG, "Failed to start supplicant");
                 mWifiMetrics.incrementNumSetupClientInterfaceFailureDueToSupplicant();
                 return null;
@@ -891,6 +892,11 @@ public class WifiNative {
                 Log.e(TAG, "Failed to setup iface in wificond on " + iface);
                 teardownInterface(iface.name);
                 mWifiMetrics.incrementNumSetupClientInterfaceFailureDueToWificond();
+                return null;
+            }
+            if (prePieWifi && !startSupplicant()) {
+                Log.e(TAG, "Failed to start supplicant");
+                mWifiMetrics.incrementNumSetupClientInterfaceFailureDueToSupplicant();
                 return null;
             }
             if (!mSupplicantStaIfaceHal.setupIface(iface.name)) {

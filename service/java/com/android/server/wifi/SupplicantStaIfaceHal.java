@@ -577,7 +577,7 @@ public class SupplicantStaIfaceHal {
      * Check if the device is running V1_1 supplicant service.
      * @return
      */
-    private boolean isV1_1() {
+    /* package */ boolean isV1_1() {
         synchronized (mLock) {
             try {
                 return (getSupplicantMockableV1_1() != null);
