@@ -636,4 +636,30 @@ public class BaseWifiService extends IWifiManager.Stub {
             String callingPackage, String callingFeatureId) {
         throw new UnsupportedOperationException();
     }
+
+    @Override
+    public void setScanThrottleEnabled(boolean enable) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public boolean isScanThrottleEnabled() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Map<String, Map<Integer, List<ScanResult>>>
+            getAllMatchingPasspointProfilesForScanResults(List<ScanResult> scanResults) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setAutoWakeupEnabled(boolean enable) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public boolean isAutoWakeupEnabled() {
+        throw new UnsupportedOperationException();
+    }
 }

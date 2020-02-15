@@ -77,7 +77,7 @@ import android.net.wifi.hotspot2.IProvisioningCallback;
 import android.net.wifi.hotspot2.OsuProvider;
 import android.net.wifi.p2p.WifiP2pManager;
 import android.net.wifi.wificond.DeviceWiphyCapabilities;
-import android.net.wifi.wificond.WifiCondManager;
+import android.net.wifi.wificond.WifiNl80211Manager;
 import android.os.BatteryStatsManager;
 import android.os.Bundle;
 import android.os.ConditionVariable;
@@ -1119,6 +1119,8 @@ public class ClientModeImpl extends StateMachine {
         mMboOceController.enableVerboseLogging(mVerboseLoggingEnabled);
         mWifiScoreCard.enableVerboseLogging(mVerboseLoggingEnabled);
         mWifiHealthMonitor.enableVerboseLogging(mVerboseLoggingEnabled);
+        mWifiInjector.getThroughputPredictor().enableVerboseLogging(mVerboseLoggingEnabled);
+        mWifiDataStall.enableVerboseLogging(mVerboseLoggingEnabled);
     }
 
     private boolean setRandomMacOui() {
@@ -1264,14 +1266,14 @@ public class ClientModeImpl extends StateMachine {
             if (mContext.getResources().getBoolean(R.bool.config_wifi5ghzSupport)) {
                 return true;
             }
-            return (mWifiNative.getChannelsForBand(WifiScanner.WIFI_BAND_5_GHZ).size() > 0);
+            return (mWifiNative.getChannelsForBand(WifiScanner.WIFI_BAND_5_GHZ).length > 0);
         }
 
         if (band == WifiScanner.WIFI_BAND_6_GHZ) {
             if (mContext.getResources().getBoolean(R.bool.config_wifi6ghzSupport)) {
                 return true;
             }
-            return (mWifiNative.getChannelsForBand(WifiScanner.WIFI_BAND_6_GHZ).size() > 0);
+            return (mWifiNative.getChannelsForBand(WifiScanner.WIFI_BAND_6_GHZ).length > 0);
         }
 
         return false;
@@ -2311,7 +2313,7 @@ public class ClientModeImpl extends StateMachine {
      * Fetch RSSI, linkspeed, and frequency on current connection
      */
     private void fetchRssiLinkSpeedAndFrequencyNative() {
-        WifiCondManager.SignalPollResult pollResult = mWifiNative.signalPoll(mInterfaceName);
+        WifiNl80211Manager.SignalPollResult pollResult = mWifiNative.signalPoll(mInterfaceName);
         if (pollResult == null) {
             return;
         }
@@ -2695,7 +2697,6 @@ public class ClientModeImpl extends StateMachine {
             msg.what = WifiP2pServiceImpl.BLOCK_DISCOVERY;
             msg.arg1 = WifiP2pServiceImpl.ENABLED;
             msg.arg2 = CMD_PRE_DHCP_ACTION_COMPLETE;
-            msg.obj = ClientModeImpl.this;
             mWifiP2pChannel.sendMessage(msg);
         } else {
             // If the p2p service is not running, we can proceed directly.
@@ -2796,7 +2797,7 @@ public class ClientModeImpl extends StateMachine {
 
         if (level2FailureCode != WifiMetrics.ConnectionEvent.FAILURE_NONE) {
 
-            int bssidBlocklistMonitorReason = convertToBssidBlocklistMonitorFailureReason(
+            int blocklistReason = convertToBssidBlocklistMonitorFailureReason(
                     level2FailureCode, level2FailureReason);
 
             String bssid = mLastBssid == null ? mTargetRoamBSSID : mLastBssid;
@@ -2805,16 +2806,29 @@ public class ClientModeImpl extends StateMachine {
                 ssid = getTargetSsid();
             }
 
-            if (level2FailureCode != WifiMetrics.ConnectionEvent.FAILURE_NETWORK_DISCONNECTION) {
+            if (blocklistReason != -1) {
                 int networkId = (configuration == null) ? WifiConfiguration.INVALID_NETWORK_ID
                         : configuration.networkId;
                 int scanRssi = mWifiConfigManager.findScanRssi(networkId, SCAN_RSSI_VALID_TIME_MS);
-                mWifiScoreCard.noteConnectionFailure(mWifiInfo, scanRssi, ssid,
-                        bssidBlocklistMonitorReason);
-            }
-            if (bssidBlocklistMonitorReason != -1) {
-                mBssidBlocklistMonitor.handleBssidConnectionFailure(bssid, ssid,
-                        bssidBlocklistMonitorReason);
+                mWifiScoreCard.noteConnectionFailure(mWifiInfo, scanRssi, ssid, blocklistReason);
+                boolean isNonWrongPwdAuthFailure =
+                        blocklistReason == BssidBlocklistMonitor.REASON_AUTHENTICATION_FAILURE
+                        || blocklistReason == BssidBlocklistMonitor.REASON_EAP_FAILURE;
+                boolean isEnterpriseNetwork = configuration != null && configuration.isEnterprise();
+                if (isNonWrongPwdAuthFailure && isEnterpriseNetwork
+                        && mWifiScoreCard.detectAbnormalAuthFailure(ssid)) {
+                    String bugTitle = "Wi-Fi BugReport";
+                    String bugDetail = "Abnormal authentication failure with enterprise network";
+                    mWifiDiagnostics.takeBugReport(bugTitle, bugDetail);
+                }
+
+                boolean isLowRssi = false;
+                int sufficientRssi = getSufficientRssi(networkId, bssid);
+                if (scanRssi != WifiInfo.INVALID_RSSI && sufficientRssi != WifiInfo.INVALID_RSSI) {
+                    isLowRssi = scanRssi < sufficientRssi;
+                }
+                mBssidBlocklistMonitor.handleBssidConnectionFailure(bssid, ssid, blocklistReason,
+                        isLowRssi);
             }
         }
 
@@ -2838,6 +2852,22 @@ public class ClientModeImpl extends StateMachine {
                     level2FailureCode, configuration, getCurrentBSSID());
         }
         handleConnectionAttemptEndForDiagnostics(level2FailureCode);
+    }
+
+    /**
+     * Returns the sufficient RSSI for the frequency that this network is last seen on.
+     */
+    private int getSufficientRssi(int networkId, String bssid) {
+        ScanDetailCache scanDetailCache =
+                mWifiConfigManager.getScanDetailCacheForNetwork(networkId);
+        if (scanDetailCache == null) {
+            return WifiInfo.INVALID_RSSI;
+        }
+        ScanResult scanResult = scanDetailCache.getScanResult(bssid);
+        if (scanResult == null) {
+            return WifiInfo.INVALID_RSSI;
+        }
+        return mWifiInjector.getScoringParams().getSufficientRssi(scanResult.frequency);
     }
 
     private int convertToBssidBlocklistMonitorFailureReason(
@@ -3467,7 +3497,7 @@ public class ClientModeImpl extends StateMachine {
             // Notify PasspointManager of Passpoint network connected event.
             WifiConfiguration currentNetwork = getCurrentWifiConfiguration();
             if (currentNetwork != null && currentNetwork.isPasspoint()) {
-                mPasspointManager.onPasspointNetworkConnected(currentNetwork.FQDN);
+                mPasspointManager.onPasspointNetworkConnected(currentNetwork.getKey());
             }
         }
     }
@@ -4573,7 +4603,7 @@ public class ClientModeImpl extends StateMachine {
                             }
                             mWifiScoreReport.noteIpCheck();
                         }
-                        int statusDataStall = mWifiDataStall.checkForDataStall(
+                        int statusDataStall = mWifiDataStall.checkDataStallAndThroughputSufficiency(
                                 mLastLinkLayerStats, stats, mWifiInfo);
                         if (mDataStallTriggerTimeMs == -1
                                 && statusDataStall != WifiIsUnusableEvent.TYPE_UNKNOWN) {
@@ -4621,7 +4651,7 @@ public class ClientModeImpl extends StateMachine {
                     break;
                 case CMD_PKT_CNT_FETCH:
                     callbackIdentifier = message.arg2;
-                    WifiCondManager.TxPacketCounters counters =
+                    WifiNl80211Manager.TxPacketCounters counters =
                             mWifiNative.getTxPacketCounters(mInterfaceName);
                     if (counters != null) {
                         sendTxPacketCountListenerSuccess(callbackIdentifier,
@@ -5113,10 +5143,14 @@ public class ClientModeImpl extends StateMachine {
                                             config.networkId,
                                             DISABLED_NO_INTERNET_TEMPORARY);
                                 }
+                                int rssi = mWifiInfo.getRssi();
+                                int sufficientRssi = mWifiInjector.getScoringParams()
+                                        .getSufficientRssi(mWifiInfo.getFrequency());
+                                boolean isLowRssi = rssi < sufficientRssi;
                                 mBssidBlocklistMonitor.handleBssidConnectionFailure(
                                         mLastBssid, config.SSID,
-                                        BssidBlocklistMonitor
-                                                .REASON_NETWORK_VALIDATION_FAILURE);
+                                        BssidBlocklistMonitor.REASON_NETWORK_VALIDATION_FAILURE,
+                                        isLowRssi);
                                 mWifiScoreCard.noteValidationFailure(mWifiInfo);
                             }
                         }
@@ -5171,9 +5205,13 @@ public class ClientModeImpl extends StateMachine {
                     boolean localGen = message.arg1 == 1;
                     if (!localGen) { // ignore disconnects initiated by wpa_supplicant.
                         mWifiScoreCard.noteNonlocalDisconnect(message.arg2);
+                        int rssi = mWifiInfo.getRssi();
+                        int sufficientRssi = mWifiInjector.getScoringParams()
+                                .getSufficientRssi(mWifiInfo.getFrequency());
+                        boolean isLowRssi = rssi < sufficientRssi;
                         mBssidBlocklistMonitor.handleBssidConnectionFailure(mWifiInfo.getBSSID(),
                                 mWifiInfo.getSSID(),
-                                BssidBlocklistMonitor.REASON_ABNORMAL_DISCONNECT);
+                                BssidBlocklistMonitor.REASON_ABNORMAL_DISCONNECT, isLowRssi);
                     }
                     config = getCurrentWifiConfiguration();
 
@@ -5381,11 +5419,13 @@ public class ClientModeImpl extends StateMachine {
                         // Update Passpoint information before setNetworkDetailedState as
                         // WifiTracker monitors NETWORK_STATE_CHANGED_ACTION to update UI.
                         mWifiInfo.setFQDN(null);
+                        mWifiInfo.setPasspointUniqueId(null);
                         mWifiInfo.setOsuAp(false);
                         mWifiInfo.setProviderFriendlyName(null);
                         if (config != null && (config.isPasspoint() || config.osu)) {
                             if (config.isPasspoint()) {
                                 mWifiInfo.setFQDN(config.FQDN);
+                                mWifiInfo.setPasspointUniqueId(config.getPasspointUniqueId());
                             } else {
                                 mWifiInfo.setOsuAp(true);
                             }
@@ -5744,6 +5784,7 @@ public class ClientModeImpl extends StateMachine {
     public void setDeviceMobilityState(@DeviceMobilityState int state) {
         mWifiConnectivityManager.setDeviceMobilityState(state);
         mWifiHealthMonitor.setDeviceMobilityState(state);
+        mWifiDataStall.setDeviceMobilityState(state);
     }
 
     /**
@@ -5760,7 +5801,7 @@ public class ClientModeImpl extends StateMachine {
      * Sends a link probe.
      */
     @VisibleForTesting
-    public void probeLink(WifiCondManager.SendMgmtFrameCallback callback, int mcs) {
+    public void probeLink(WifiNl80211Manager.SendMgmtFrameCallback callback, int mcs) {
         mWifiNative.probeLink(mInterfaceName, MacAddress.fromString(mWifiInfo.getBSSID()),
                 callback, mcs);
     }

@@ -361,7 +361,7 @@ public class WifiNetworkSelectorTest extends WifiBaseTest {
         assertEquals("Expect null configuration", null, candidate);
         assertTrue(mWifiNetworkSelector.getConnectableScanDetails().isEmpty());
 
-        verify(mWifiConfigManager, times(2)).updateScanDetailCacheFromScanDetail(any());
+        verify(mWifiConfigManager, atLeast(2)).updateScanDetailCacheFromScanDetail(any());
     }
 
     /**
@@ -534,6 +534,7 @@ public class WifiNetworkSelectorTest extends WifiBaseTest {
         // Do network selection.
         mWifiNetworkSelector.selectNetwork(scanDetails,
                 blacklist, mWifiInfo, true, false, false);
+        verify(mWifiMetrics).incrementNetworkSelectionFilteredBssidCount(0);
 
         verify(mWifiConfigManager).getConfiguredNetworks();
         verify(mWifiConfigManager, times(savedConfigs.length)).tryEnableNetwork(anyInt());
@@ -567,6 +568,7 @@ public class WifiNetworkSelectorTest extends WifiBaseTest {
 
         WifiConfiguration candidate = mWifiNetworkSelector.selectNetwork(scanDetails,
                 blacklist, mWifiInfo, false, true, false);
+        verify(mWifiMetrics).incrementNetworkSelectionFilteredBssidCount(1);
         assertEquals("Expect null configuration", null, candidate);
         assertTrue(mWifiNetworkSelector.getConnectableScanDetails().isEmpty());
     }
@@ -625,7 +627,7 @@ public class WifiNetworkSelectorTest extends WifiBaseTest {
         // missing from the scan results.
         assertEquals("Expect null configuration", null, candidate);
         assertTrue(mWifiNetworkSelector.getConnectableScanDetails().isEmpty());
-        verify(mWifiConfigManager, times(1)).updateScanDetailCacheFromScanDetail(any());
+        verify(mWifiConfigManager, atLeast(1)).updateScanDetailCacheFromScanDetail(any());
     }
 
     /**
