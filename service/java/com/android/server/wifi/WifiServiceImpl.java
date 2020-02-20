@@ -27,6 +27,8 @@ import static android.net.wifi.WifiManager.WIFI_AP_STATE_ENABLED;
 import static android.net.wifi.WifiManager.WIFI_AP_STATE_ENABLING;
 import static android.net.wifi.WifiManager.WIFI_AP_STATE_FAILED;
 
+import static com.android.server.wifi.WifiSettingsConfigStore.WIFI_VERBOSE_LOGGING_ENABLED;
+
 import android.annotation.CheckResult;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -41,7 +43,6 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ParceledListSlice;
 import android.content.pm.ResolveInfo;
-import android.database.ContentObserver;
 import android.net.DhcpInfo;
 import android.net.DhcpResultsParcelable;
 import android.net.InetAddresses;
@@ -339,12 +340,14 @@ public class WifiServiceImpl extends BaseWifiService {
      */
     public void checkAndStartWifi() {
         mWifiThreadRunner.post(() -> {
+            if (!mWifiConfigManager.loadFromStore()) {
+                Log.e(TAG, "Failed to load from config store");
+            }
             // Check if wi-fi needs to be enabled
             boolean wifiEnabled = mSettingsStore.isWifiToggleEnabled();
             Log.i(TAG,
                     "WifiService starting up with Wi-Fi " + (wifiEnabled ? "enabled" : "disabled"));
 
-            registerForScanModeChange();
             mContext.registerReceiver(
                     new BroadcastReceiver() {
                         @Override
@@ -407,9 +410,6 @@ public class WifiServiceImpl extends BaseWifiService {
             }
             mContext.registerReceiver(mReceiver, intentFilter);
             mMemoryStoreImpl.start();
-            if (!mWifiConfigManager.loadFromStore()) {
-                Log.e(TAG, "Failed to load from config store");
-            }
             mPasspointManager.initializeProvisioner(
                     mWifiInjector.getPasspointProvisionerHandlerThread().getLooper());
             mClientModeImpl.handleBootCompleted();
@@ -1886,6 +1886,17 @@ public class WifiServiceImpl extends BaseWifiService {
     }
 
     /**
+     * see {@link android.net.wifi.WifiManager#setScanAlwaysAvailable(boolean)}
+     */
+    @Override
+    public void setScanAlwaysAvailable(boolean isAvailable) {
+        enforceNetworkSettingsPermission();
+        mLog.info("setScanAlwaysAvailable uid=%").c(Binder.getCallingUid()).flush();
+        mSettingsStore.handleWifiScanAlwaysAvailableToggled(isAvailable);
+        mActiveModeWarden.scanAlwaysModeChanged();
+    }
+
+    /**
      * see {@link android.net.wifi.WifiManager#isScanAlwaysAvailable()}
      */
     @Override
@@ -2709,16 +2720,29 @@ public class WifiServiceImpl extends BaseWifiService {
      */
     @Override
     public boolean removePasspointConfiguration(String fqdn, String packageName) {
+        return removePasspointConfigurationInternal(fqdn, null);
+    }
+
+    /**
+     * Remove a Passpoint profile based on either FQDN (multiple matching profiles) or a unique
+     * identifier (one matching profile).
+     *
+     * @param fqdn The FQDN of the Passpoint configuration to be removed
+     * @param uniqueId The unique identifier of the Passpoint configuration to be removed
+     * @return true on success or false on failure
+     */
+    private boolean removePasspointConfigurationInternal(String fqdn, String uniqueId) {
         final int uid = Binder.getCallingUid();
         boolean privileged = false;
         if (mWifiPermissionsUtil.checkNetworkSettingsPermission(uid)
                 || mWifiPermissionsUtil.checkNetworkCarrierProvisioningPermission(uid)) {
             privileged = true;
         }
-        mLog.info("removePasspointConfiguration uid=%").c(Binder.getCallingUid()).flush();
+        mLog.info("removePasspointConfigurationInternal uid=%").c(Binder.getCallingUid()).flush();
         final boolean privilegedFinal = privileged;
         return mWifiThreadRunner.call(
-                () -> mPasspointManager.removeProvider(uid, privilegedFinal, null, fqdn), false);
+                () -> mPasspointManager.removeProvider(uid, privilegedFinal, uniqueId, fqdn),
+                false);
     }
 
     /**
@@ -3021,23 +3045,6 @@ public class WifiServiceImpl extends BaseWifiService {
         }
     };
 
-    /**
-     * Observes settings changes to scan always mode.
-     */
-    private void registerForScanModeChange() {
-        ContentObserver contentObserver = new ContentObserver(null) {
-            @Override
-            public void onChange(boolean selfChange) {
-                mSettingsStore.handleWifiScanAlwaysAvailableToggled();
-                mActiveModeWarden.scanAlwaysModeChanged();
-            }
-        };
-        mFrameworkFacade.registerContentObserver(mContext,
-                Settings.Global.getUriFor(Settings.Global.WIFI_SCAN_ALWAYS_AVAILABLE),
-                false, contentObserver);
-
-    }
-
     private void registerForBroadcasts() {
         IntentFilter intentFilter = new IntentFilter();
         intentFilter.addAction(Intent.ACTION_PACKAGE_FULLY_REMOVED);
@@ -3277,8 +3284,8 @@ public class WifiServiceImpl extends BaseWifiService {
         mLog.info("enableVerboseLogging uid=% verbose=%")
                 .c(Binder.getCallingUid())
                 .c(verbose).flush();
-        mFacade.setIntegerSetting(
-                mContext, Settings.Global.WIFI_VERBOSE_LOGGING_ENABLED, verbose);
+        mWifiInjector.getSettingsConfigStore().putBoolean(
+                WIFI_VERBOSE_LOGGING_ENABLED, verbose > 0);
         enableVerboseLoggingInternal(verbose);
     }
 
@@ -3295,8 +3302,8 @@ public class WifiServiceImpl extends BaseWifiService {
         if (mVerboseLoggingEnabled) {
             mLog.info("getVerboseLoggingLevel uid=%").c(Binder.getCallingUid()).flush();
         }
-        return mFacade.getIntegerSetting(
-                mContext, Settings.Global.WIFI_VERBOSE_LOGGING_ENABLED, 0);
+        return mWifiInjector.getSettingsConfigStore().getBoolean(
+                WIFI_VERBOSE_LOGGING_ENABLED, false) ? 1 : 0;
     }
 
     @Override
@@ -3335,7 +3342,7 @@ public class WifiServiceImpl extends BaseWifiService {
                 () -> mPasspointManager.getProviderConfigs(Process.WIFI_UID /* ignored */, true),
                 Collections.emptyList());
         for (PasspointConfiguration config : configs) {
-            removePasspointConfiguration(config.getUniqueId(), packageName);
+            removePasspointConfigurationInternal(null, config.getUniqueId());
         }
         mWifiThreadRunner.post(() -> {
             mWifiConfigManager.clearDeletedEphemeralNetworks();
